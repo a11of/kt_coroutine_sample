@@ -1,29 +1,336 @@
 package org.example
 
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelChildren
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.consumeEach
+import kotlinx.coroutines.channels.produce
+import kotlinx.coroutines.channels.ticker
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.asFlow
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.flatMap
+import kotlinx.coroutines.flow.flatMapConcat
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.newSingleThreadContext
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.concurrent.thread
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.system.measureTimeMillis
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.measureTime
 
 //TIP 要<b>运行</b>代码，请按 <shortcut actionId="Run"/> 或
 // 点击装订区域中的 <icon src="AllIcons.Actions.Execute"/> 图标。
 suspend fun main() {
-    sample15()
+    sample29()
+}
+@Volatile
+var x = 0
+val y = AtomicInteger(0)
+val singleThreadContext = newSingleThreadContext("single")
+val mutex = Mutex()
+fun sample29() = runBlocking {
+    val n = 100
+    val m = 1000
+    val timeMillis = measureTimeMillis {
+        coroutineScope {
+            repeat(n) {
+                launch(Dispatchers.IO) {
+                    repeat(m) {
+                        y.incrementAndGet()
+//                        mutex.withLock {
+//                            y.incrementAndGet()
+//                        }
+
+                    }
+                }
+            }
+        }
+    }
+    withContext(Dispatchers.IO) {
+        repeat(n) {
+            launch {
+                repeat(n) {
+                    mutex.withLock {
+                        x++
+                    }
+                }
+            }
+        }
+
+    }
+    println("this is x value = ${x} cost time millis:$timeMillis")
+    println("this is y value = ${y.get()} cost time millis:$timeMillis")
+
+}
+val handler = CoroutineExceptionHandler { _, exception ->
+    println("CoroutineExceptionHandler got $exception")
+}
+fun sample28() = runBlocking {
+    val job2 = CoroutineScope(Dispatchers.IO).launch(handler) {
+        val job1 = launch {
+            try {
+                delay(Long.MAX_VALUE)
+            } finally {
+                withContext(NonCancellable) {
+                    println("Children are cancelled, but exception is not handled until all children terminate")
+                    delay(100)
+                    println("The first child finished its non cancellable block")
+                }
+            }
+        }
+        val job = launch {
+            delay(1000)
+            println("Second child throws an exception")
+            throw ArithmeticException()
+        }
+    }
+    job2.join()
+
+}
+
+fun sample27() = runBlocking {
+    val job = GlobalScope.launch(handler) { // root coroutine, running in GlobalScope
+        throw AssertionError()
+
+    }
+    val async = GlobalScope.async(handler) {
+        throw ArithmeticException()
+    }
+    joinAll(async, job)
+    println("done")
+
+}
+fun sample26() = runBlocking {
+    val ticker = ticker(delayMillis = 200, initialDelayMillis = 0)
+    withTimeoutOrNull(1.seconds){
+        val element = ticker.receive()
+        println(element)
+    }
+    withTimeoutOrNull(100){
+        val element = ticker.receive()
+        println(element)
+    }
+}
+fun sample25() = runBlocking {
+    val channel = Channel<String>()
+    launch {
+        channel.consumeEach {
+            println("first receiver get $it on thread ${Thread.currentThread().name}")
+            delay(300)
+            channel.send("ping")
+        }
+    }
+    launch {
+        channel.consumeEach {
+            println("second receiver get $it on thread ${Thread.currentThread().name}")
+            delay(300)
+            channel.send("pong")
+        }
+    }
+    delay(1000)
+    channel.send("start...")
+    delay(2000)
+    coroutineContext.cancelChildren()
+
+}
+fun sample24() = runBlocking {
+    val channel = Channel<Int>(5)
+    launch {
+        var x = 0
+        while (true) {
+            delay(1.seconds)
+            println("channel send $x on thread ${Thread.currentThread().name}")
+            channel.send(x++)
+        }
+    }
+    delay(1.seconds)
+    val receive = channel.receive()
+    println("receive: $receive on thread ${Thread.currentThread().name}")
+    delay(1.seconds)
+    val receive1 = channel.receive()
+    println("receive: $receive1 on thread ${Thread.currentThread().name}")
+    delay(1.seconds)
+    launch {
+        channel.consumeEach {
+            println("receive: $it on thread ${Thread.currentThread().name}")
+        }
+    }
+//    channel.close()
+
+}
+fun sample23() =  runBlocking {
+    var x = 0;
+    val produce = produce {
+        while (true) {
+            delay(100)
+            send(x++)
+        }
+    }
+    repeat(5){index->
+        launch {
+            produce.consumeEach {
+                println("process:$index receive:$it") }
+        }
+    }
+    delay(1.seconds)
+    produce.cancel()
+}
+suspend fun sample22() = runBlocking{
+    val channel = Channel<Int>()
+    launch(Dispatchers.Default) {
+        for (i in 0..5) {
+            delay(100)
+            channel.send(i)
+        }
+        channel.close()
+    }
+    launch {
+        for (i in channel) {
+            println("$i")
+        }
+    }
+    val produce = produce<Int> {
+        for (i in channel) {
+            send(i * i)
+        }
+    }
+    delay(300)
+    for (i in produce) {
+        println("$i")
+    }
+    coroutineContext.cancelChildren()
+    println("Done!")
+
+
+
+}
+suspend fun sample21() = runBlocking<Unit> {
+    val flow = flow {
+        for (i in 0..5) {
+            delay(100)
+            emit(i)
+        }
+    }
+    flow.flatMapConcat {
+        flow {
+            emit("flat start on thread ${Thread.currentThread().name}")
+            delay(300)
+            emit("$it on thread ${Thread.currentThread().name}")
+        }
+    }.collect { println(it) }
+}
+suspend fun sample20()  = runBlocking(Dispatchers.Default) {
+    coroutineScope {
+        val job = launch {
+            val flow = flow {
+                for (i in 1..5) {
+                    delay(100)
+                    emit(i)
+                }
+            }
+            flow.collect { value ->
+                println(value)
+            }
+        }
+        delay(300)
+        job.cancel()
+
+    }
+
+}
+suspend fun sample19() = runBlocking {
+//    val flow = flow {
+//        for (i in 1..5) {
+//            delay(100)
+//            emit(i)
+//        }
+//    }
+    (1..3).asFlow().collect {
+        if (it == 3) {
+            cancel()
+        }
+        println(it)
+    }
+//    flow.collect {
+//        if (it == 3) {
+//            cancel()
+//        }
+//        println("$it on thread ${Thread.currentThread().name}")
+//    }
+}
+suspend fun sample18() = runBlocking<Unit> {
+    val flow = flow {
+        for (i in 0..3) {
+            delay(100)
+            emit(i)
+        }
+    }
+    coroutineScope {
+        launch(Dispatchers.IO) {
+            val job = flow.onEach {
+                println("current value:$it on thread:${Thread.currentThread().name}")
+            }.launchIn(this)
+            delay(300)
+            job.cancel()
+        }
+        println("coroutineScope Done! thread:${Thread.currentThread().name}")
+    }
+    println("done! on thread:${Thread.currentThread().name}")
+}
+suspend fun sample17() = runBlocking {
+    simple().collect { value -> println(value) }
+}
+fun simple(): Flow<Int> = flow {
+    // The WRONG way to change context for CPU-consuming code in flow builder
+    withContext(Dispatchers.Default) {
+        for (i in 1..3) {
+            Thread.sleep(100)// pretend we are computing it in CPU-consuming way
+            emit(i) // emit next value
+        }
+    }
+}
+suspend fun sample16() {
+    val flow = flow {
+        for (i in 1..1000) {
+            delay(100)
+            emit(i)
+        }
+    }
+    withContext(Dispatchers.Default) {
+        withTimeoutOrNull(500.milliseconds) {
+            flow.collect { value -> println("$value thread ${Thread.currentThread().name}") }
+        }
+
+        println("there is a string on the thread ${Thread.currentThread().name}")
+    }
+    println("Done!")
 }
 suspend fun sample15() {
     coroutineScope {
