@@ -32,6 +32,7 @@ import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.newSingleThreadContext
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -48,7 +49,38 @@ import kotlin.time.measureTime
 //TIP 要<b>运行</b>代码，请按 <shortcut actionId="Run"/> 或
 // 点击装订区域中的 <icon src="AllIcons.Actions.Execute"/> 图标。
 suspend fun main() {
-    sample29()
+    sample30()
+}
+fun sample30() = runBlocking {
+    coroutineScope {
+        launch(Dispatchers.IO) {
+            println("first")
+            launch(Dispatchers.Default) {
+                println("first-2-1")
+            }
+            withContext(Dispatchers.Default) {
+                delay(1000)
+                println("first-2-2")
+            }
+            val job = CoroutineScope(Dispatchers.Default).launch {
+                delay(1000)
+                println("first-new-coroutine")
+            }
+            coroutineScope {
+                delay(500)
+                println("first-new-coroutineScope")
+            }
+            println("first end")
+        }
+        launch(Dispatchers.IO) {
+            println("second ")
+        }
+        withContext(Dispatchers.Default) {
+            println("with context")
+        }
+        println("end")
+    }
+
 }
 @Volatile
 var x = 0
@@ -315,6 +347,7 @@ fun simple(): Flow<Int> = flow {
             emit(i) // emit next value
         }
     }
+
 }
 suspend fun sample16() {
     val flow = flow {
