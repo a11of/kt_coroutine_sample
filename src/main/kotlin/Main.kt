@@ -9,6 +9,7 @@ import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelChildren
@@ -49,7 +50,26 @@ import kotlin.time.measureTime
 //TIP 要<b>运行</b>代码，请按 <shortcut actionId="Run"/> 或
 // 点击装订区域中的 <icon src="AllIcons.Actions.Execute"/> 图标。
 suspend fun main() {
-    sample30()
+    sample31()
+}
+fun sample31() = runBlocking {
+    CoroutineScope(Dispatchers.IO).launch {
+        println("starting new coroutine")
+        val first = async {
+            delay(1000)
+            println("first child finished...")
+            1
+        }
+        val second = async {
+            delay(1500)
+            println("second child finished...")
+            2
+        }
+        val all = awaitAll(first, second)
+        println("all finished ${first.await()}, ${second.await()}")
+    }
+    println("main end..")
+    delay(2000)
 }
 fun sample30() = runBlocking {
     coroutineScope {
